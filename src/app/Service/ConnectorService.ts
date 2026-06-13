@@ -1,5 +1,6 @@
 import { Injectable } from '@angular/core';
 import { Connector } from '../Model/Connector';
+import { WireEnd } from '../Model/Wire';
 import {
 	getConnectorHeight,
 	getConnectorWidth,
@@ -93,7 +94,8 @@ export class ConnectorService {
 	findSnapPointNear(
 		stageX: number,
 		stageY: number,
-		threshold = 30
+		threshold = 30,
+		exclude?: WireEnd
 	): {
 		connector: Connector;
 		pinId: string;
@@ -113,6 +115,15 @@ export class ConnectorService {
 		for (const connector of this.connectors) {
 			for (const pin of connector.pins) {
 				for (const side of ['left', 'right'] as const) {
+					if (
+						exclude &&
+						connector.id === exclude.connectorId &&
+						pin.id === exclude.pinId &&
+						side === exclude.side
+					) {
+						continue;
+					}
+
 					const pos = this.getSnapPointStagePosition(
 						connector,
 						pin.id,

@@ -41,9 +41,12 @@ export class WireService {
 	updateActiveWireEnd(wire: WireDisplay, endX: number, endY: number): void {
 		wire.endX = endX;
 		wire.endY = endY;
+		this.recomputeWireControls(wire);
+	}
 
-		const dx = endX - wire.startX;
-		const offset = Math.max(Math.abs(dx) * 0.3, 30);
+	recomputeWireControls(wire: WireDisplay): void {
+		const dx = wire.endX - wire.startX;
+		const offset = Math.max(Math.abs(dx) * 0.3, CONNECTOR_LAYOUT.CONTROL_OFFSET);
 
 		if (wire.from.side === 'left') {
 			wire.controlStartX = wire.startX - offset;
@@ -52,8 +55,8 @@ export class WireService {
 		}
 		wire.controlStartY = wire.startY;
 
-		wire.controlEndX = endX - dx * 0.3;
-		wire.controlEndY = endY;
+		wire.controlEndX = wire.endX - dx * 0.3;
+		wire.controlEndY = wire.endY;
 	}
 
 	commitActiveWire(): WireDisplay | null {
@@ -68,34 +71,53 @@ export class WireService {
 
 	updateWiresForConnector(connectorId: string): void {
 		for (const wire of this.displayWires) {
-			if (wire.from.connectorId !== connectorId) {
-				continue;
-			}
 			const connector = this.connectors.connectors.find((c) => c.id === connectorId);
 			if (!connector) {
 				continue;
 			}
-			const pos = this.connectors.getSnapPointStagePosition(
-				connector,
-				wire.from.pinId,
-				wire.from.side
-			);
-			if (!pos) {
-				continue;
-			}
-			wire.startX = pos.x;
-			wire.startY = pos.y;
 
-			const offset = Math.max(
-				Math.abs(wire.controlStartX - wire.startX),
-				CONNECTOR_LAYOUT.CONTROL_OFFSET
-			);
-			if (wire.from.side === 'left') {
-				wire.controlStartX = wire.startX - offset;
-			} else {
-				wire.controlStartX = wire.startX + offset;
+			// Update start position if wire originates from this connector
+			if (wire.from.connectorId === connectorId) {
+				const pos = this.connectors.getSnapPointStagePosition(
+					connector,
+					wire.from.pinId,
+					wire.from.side
+				);
+				if (pos) {
+					wire.startX = pos.x;
+					wire.startY = pos.y;
+
+					const offset = Math.max(
+						Math.abs(wire.controlStartX - wire.startX),
+						CONNECTOR_LAYOUT.CONTROL_OFFSET
+					);
+					if (wire.from.side === 'left') {
+						wire.controlStartX = wire.startX - offset;
+					} else {
+						wire.controlStartX = wire.startX + offset;
+					}
+					wire.controlStartY = wire.startY;
+				}
 			}
-			wire.controlStartY = wire.startY;
+
+			// Update end position if wire connects to this connector
+			if (wire.to && wire.to.connectorId === connectorId) {
+				const pos = this.connectors.getSnapPointStagePosition(
+					connector,
+					wire.to.pinId,
+					wire.to.side
+				);
+				if (pos) {
+					wire.endX = pos.x;
+					wire.endY = pos.y;
+
+					const dx = wire.endX - wire.startX;
+					const offset = Math.max(Math.abs(dx) * 0.3, CONNECTOR_LAYOUT.CONTROL_OFFSET);
+
+					wire.controlEndX = wire.endX - dx * 0.3;
+					wire.controlEndY = wire.endY;
+				}
+			}
 		}
 	}
 

@@ -446,6 +446,8 @@ export class CanvasComponent implements AfterViewInit {
 		this.stage.off('mousemove');
 		this.stage.off('mouseup');
 
+		this.updateWire();
+
 		const finished = this.wires.commitActiveWire() as KonvaWire;
 		if (!finished) {
 			return;
@@ -492,7 +494,23 @@ export class CanvasComponent implements AfterViewInit {
 			return;
 		}
 
-		this.wires.updateActiveWireEnd(wire, pos.x, pos.y);
+		const snap = this.connectors.findSnapPointNear(pos.x, pos.y, 40, wire.from);
+		const endX = snap ? snap.x : pos.x;
+		const endY = snap ? snap.y : pos.y;
+
+		this.wires.updateActiveWireEnd(wire, endX, endY);
+
+		// Update wire.to when snapped to a point
+		if (snap) {
+			wire.to = {
+				connectorId: snap.connector.id,
+				pinId: snap.pinId,
+				side: snap.side
+			};
+		} else {
+			wire.to = undefined;
+		}
+
 		wire.line.points(this.wires.getBezierPoints(wire));
 		this.wireLayer.batchDraw();
 	}
@@ -634,8 +652,23 @@ export class CanvasComponent implements AfterViewInit {
 			}
 
 			if (type === 'start') {
-				wire.startX = anchor.x();
-				wire.startY = anchor.y();
+				// Check for snap points when dragging start endpoint
+				const snap = this.connectors.findSnapPointNear(anchor.x(), anchor.y(), 40, wire.from);
+				if (snap) {
+					wire.startX = snap.x;
+					wire.startY = snap.y;
+					anchor.x(snap.x);
+					anchor.y(snap.y);
+					// Update wire connection
+					wire.from = {
+						connectorId: snap.connector.id,
+						pinId: snap.pinId,
+						side: snap.side
+					};
+				} else {
+					wire.startX = anchor.x();
+					wire.startY = anchor.y();
+				}
 				startControlLine.points([
 					wire.startX,
 					wire.startY,
@@ -644,8 +677,23 @@ export class CanvasComponent implements AfterViewInit {
 				]);
 			}
 			else if (type === 'end') {
-				wire.endX = anchor.x();
-				wire.endY = anchor.y();
+				// Check for snap points when dragging end endpoint
+				const snap = this.connectors.findSnapPointNear(anchor.x(), anchor.y(), 40, wire.from);
+				if (snap) {
+					wire.endX = snap.x;
+					wire.endY = snap.y;
+					anchor.x(snap.x);
+					anchor.y(snap.y);
+					// Update wire connection
+					wire.to = {
+						connectorId: snap.connector.id,
+						pinId: snap.pinId,
+						side: snap.side
+					};
+				} else {
+					wire.endX = anchor.x();
+					wire.endY = anchor.y();
+				}
 				endControlLine.points([
 					wire.endX,
 					wire.endY,

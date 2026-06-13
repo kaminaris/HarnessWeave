@@ -2,6 +2,7 @@ import { WireEnd } from './Wire';
 
 export interface WireDisplay {
 	from: WireEnd;
+	to?: WireEnd;
 	startX: number;
 	startY: number;
 	endX: number;
@@ -12,4 +13,8 @@ export interface WireDisplay {
 	controlEndY: number;
 	stroke: string;
 	strokeWidth: number;
+	attachment?: {
+		// optional metadata for snapped wire ends
+		target: WireEnd;
+	};
 }
