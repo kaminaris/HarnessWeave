@@ -56,11 +56,10 @@ export class CanvasComponent implements AfterViewInit {
 		private canvasRender: CanvasRenderService
 	) {
 		effect(() => {
+			const overlay = this.selection.overlay();
 			if (!this.anchorLayer || !this.selectionLayer || !this.wireLayer) {
 				return;
 			}
-
-			const overlay = this.selection.overlay();
 			this.syncOverlay(overlay);
 		});
 
@@ -84,6 +83,8 @@ export class CanvasComponent implements AfterViewInit {
 	ngAfterViewInit() {
 		this.initCanvas();
 		this.render();
+		// Layers exist now; re-sync overlay in case selection was set before init
+		this.syncOverlay(this.selection.overlay());
 
 		window.addEventListener('resize', () => this.onWindowResize());
 
@@ -346,6 +347,15 @@ export class CanvasComponent implements AfterViewInit {
 				this.wires.updateWiresForConnector(c.id);
 				this.redrawAllWireCurves();
 				this.wireLayer.batchDraw();
+
+				const selected = this.selection.getSelected();
+				if (
+					selected?.type === 'connector' &&
+					selected.data === c &&
+					this.resizeHandles.length > 0
+				) {
+					this.updateResizeHandlePositions(c);
+				}
 			});
 
 			group.on('dragend', () => {

@@ -63,4 +63,79 @@ export class ConnectorService {
 	getDefaultWidth(): number {
 		return DEFAULT_CONNECTOR_WIDTH;
 	}
+
+	addConnector(): Connector {
+		const id = `J${Date.now()}`;
+		const offset = this.connectors.length * 40;
+		const connector: Connector = {
+			id,
+			type: 'Connector',
+			name: `Connector ${this.connectors.length + 1}`,
+			description: '',
+			x: 120 + offset,
+			y: 120 + offset,
+			pins: [
+				{
+					id: `pin-${id}-01`,
+					name: '1',
+					description: ''
+				}
+			]
+		};
+		this.connectors.push(connector);
+		return connector;
+	}
+
+	setConnectors(connectors: Connector[]): void {
+		this.connectors = connectors;
+	}
+
+	findSnapPointNear(
+		stageX: number,
+		stageY: number,
+		threshold = 30
+	): {
+		connector: Connector;
+		pinId: string;
+		side: 'left' | 'right';
+		x: number;
+		y: number;
+	} | null {
+		let best: {
+			connector: Connector;
+			pinId: string;
+			side: 'left' | 'right';
+			x: number;
+			y: number;
+		} | null = null;
+		let bestDist = threshold;
+
+		for (const connector of this.connectors) {
+			for (const pin of connector.pins) {
+				for (const side of ['left', 'right'] as const) {
+					const pos = this.getSnapPointStagePosition(
+						connector,
+						pin.id,
+						side
+					);
+					if (!pos) {
+						continue;
+					}
+					const dist = Math.hypot(pos.x - stageX, pos.y - stageY);
+					if (dist < bestDist) {
+						bestDist = dist;
+						best = {
+							connector,
+							pinId: pin.id,
+							side,
+							x: pos.x,
+							y: pos.y
+						};
+					}
+				}
+			}
+		}
+
+		return best;
+	}
 }

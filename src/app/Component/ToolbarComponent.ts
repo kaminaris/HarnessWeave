@@ -3,6 +3,9 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { SelectionService } from '../Service/SelectionService';
 import { CanvasRenderService } from '../Service/CanvasRenderService';
+import { ConnectorService } from '../Service/ConnectorService';
+import { WireService } from '../Service/WireService';
+import { HarnessStateService } from '../Service/HarnessStateService';
 
 interface WireColor {
 	name: string;
@@ -14,6 +17,25 @@ interface WireColor {
 	imports: [CommonModule, FormsModule],
 	template: `
 		<div class="toolbar">
+			<h5 class="p-3 mb-0 border-bottom">HarnessWeave</h5>
+			<div class="p-3 border-bottom project-actions">
+				<h6 class="mb-2">Project</h6>
+				<div class="action-grid">
+					<button class="btn btn-sm btn-success" (click)="addConnector()">+ Connector</button>
+					<button class="btn btn-sm btn-secondary" (click)="saveProject()">Save</button>
+					<button class="btn btn-sm btn-secondary" (click)="loadProject()">Load</button>
+					<button class="btn btn-sm btn-secondary" (click)="exportProject()">Export</button>
+					<button class="btn btn-sm btn-secondary" (click)="importInput.click()">Import</button>
+					<button class="btn btn-sm btn-outline-light" (click)="autoPathAllWires()">Auto-path all</button>
+				</div>
+				<input
+					#importInput
+					type="file"
+					accept=".json,application/json"
+					class="d-none"
+					(change)="importProject($event)"
+				/>
+			</div>
 			<h5 class="p-3 mb-0 border-bottom">Properties</h5>
 			<div class="p-3">
 				@if (selected(); as selection) {
@@ -110,6 +132,21 @@ interface WireColor {
 											</button>
 										</div>
 									}
+								</div>
+								<hr class="my-2" style="border-color: #444;" />
+								<div class="property">
+									<label>Routing</label>
+									<div class="action-grid">
+										<button class="btn btn-sm btn-outline-light" (click)="autoPathWire(selection.data)">
+											Auto path
+										</button>
+										<button class="btn btn-sm btn-outline-light" (click)="autoPathWireBundle(selection.data)">
+											Auto path bundle
+										</button>
+									</div>
+									<p class="text-muted small mt-1 mb-0">
+										Bundle routes all wires between the same two connectors with spaced curves.
+									</p>
 								</div>
 							</div>
 						}
@@ -355,6 +392,39 @@ interface WireColor {
 			.mb-1 {
 				margin-bottom: 4px;
 			}
+
+			.project-actions h6 {
+				font-size: 0.85rem;
+			}
+
+			.action-grid {
+				display: grid;
+				grid-template-columns: 1fr 1fr;
+				gap: 6px;
+			}
+
+			.btn-secondary {
+				background: #333;
+				border: 1px solid #555;
+			}
+
+			.btn-secondary:hover {
+				background: #444;
+			}
+
+			.btn-outline-light {
+				background: transparent;
+				border: 1px solid #666;
+				color: #fff;
+			}
+
+			.btn-outline-light:hover {
+				background: #333;
+			}
+
+			.d-none {
+				display: none;
+			}
 		`
 	]
 })
@@ -378,7 +448,10 @@ export class ToolbarComponent implements OnInit {
 
 	constructor(
 		public selection: SelectionService,
-		private canvasRender: CanvasRenderService
+		private canvasRender: CanvasRenderService,
+		private connectors: ConnectorService,
+		private wires: WireService,
+		private harnessState: HarnessStateService
 	) {}
 
 	ngOnInit() {
@@ -479,6 +552,67 @@ export class ToolbarComponent implements OnInit {
 
 	onConnectorPropertyChange(connector: any) {
 		this.canvasRender.requestRender();
+	}
+
+	addConnector() {
+		const connector = this.connectors.addConnector();
+		this.canvasRender.requestRender();
+		this.selection.select({ type: 'connector', data: connector });
+	}
+
+	saveProject() {
+		this.harnessState.saveToLocalStorage();
+	}
+
+	loadProject() {
+		if (this.harnessState.loadFromLocalStorage()) {
+			this.canvasRender.requestRender();
+		} else {
+			alert('No saved project found.');
+		}
+	}
+
+	exportProject() {
+		this.harnessState.exportToFile();
+	}
+
+	async importProject(event: Event) {
+		const input = event.target as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file) {
+			return;
+		}
+		try {
+			await this.harnessState.importFromFile(file);
+			this.canvasRender.requestRender();
+		} catch {
+			alert('Could not import project file.');
+		}
+		input.value = '';
+	}
+
+	autoPathWire(wire: any) {
+		this.wires.autoPathSingleWire(wire);
+		this.refreshWire(wire);
+	}
+
+	autoPathWireBundle(wire: any) {
+		this.wires.autoPathWire(wire);
+		this.refreshWire(wire);
+	}
+
+	autoPathAllWires() {
+		this.wires.autoPathAllWires();
+		this.canvasRender.requestRender();
+		const selected = this.selection.getSelected();
+		if (selected?.type === 'wire') {
+			this.refreshWire(selected.data);
+		}
+	}
+
+	private refreshWire(wire: any) {
+		this.canvasRender.requestRender();
+		this.selection.select({ type: 'wire', data: wire });
 	}
 }
 

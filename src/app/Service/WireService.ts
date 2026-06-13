@@ -4,6 +4,11 @@ import { WireDisplay } from '../Model/WireDisplay';
 import { WireEnd } from '../Model/Wire';
 import { CONNECTOR_LAYOUT } from '../Util/ConnectorLayout';
 import { ConnectorService } from './ConnectorService';
+import {
+	autoPathWireBundle,
+	computeAutoPath,
+	findWireBundle
+} from '../Util/WireRouting';
 
 @Injectable({ providedIn: 'root' })
 export class WireService {
@@ -141,5 +146,62 @@ export class WireService {
 
 	addWire(wire: Wire): void {
 		this.wires.push(wire);
+	}
+
+	setDisplayWires(wires: WireDisplay[]): void {
+		this.displayWires = wires;
+		this.activeWire = null;
+	}
+
+	autoPathSingleWire(wire: WireDisplay): void {
+		const endSnap = this.connectors.findSnapPointNear(wire.endX, wire.endY, 40);
+		computeAutoPath(wire, 0, endSnap);
+	}
+
+	autoPathWire(wire: WireDisplay): void {
+		const bundle = findWireBundle(
+			wire,
+			this.displayWires,
+			this.connectors.connectors,
+			(c, pinId, side) =>
+				this.connectors.getSnapPointStagePosition(c, pinId, side)
+		);
+		autoPathWireBundle(
+			this.displayWires,
+			bundle,
+			this.connectors.connectors,
+			(c, pinId, side) =>
+				this.connectors.getSnapPointStagePosition(c, pinId, side)
+		);
+	}
+
+	autoPathAllWires(): void {
+		const bundles: WireDisplay[][] = [];
+		const assigned = new Set<WireDisplay>();
+
+		for (const wire of this.displayWires) {
+			if (assigned.has(wire)) {
+				continue;
+			}
+			const bundle = findWireBundle(
+				wire,
+				this.displayWires,
+				this.connectors.connectors,
+				(c, pinId, side) =>
+					this.connectors.getSnapPointStagePosition(c, pinId, side)
+			);
+			bundle.forEach((w) => assigned.add(w));
+			bundles.push(bundle);
+		}
+
+		for (const bundle of bundles) {
+			autoPathWireBundle(
+				this.displayWires,
+				bundle,
+				this.connectors.connectors,
+				(c, pinId, side) =>
+					this.connectors.getSnapPointStagePosition(c, pinId, side)
+			);
+		}
 	}
 }
