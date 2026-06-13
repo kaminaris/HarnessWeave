@@ -2,6 +2,7 @@ import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { SelectionService } from '../Service/SelectionService';
+import { CanvasRenderService } from '../Service/CanvasRenderService';
 
 interface WireColor {
 	name: string;
@@ -375,7 +376,10 @@ export class ToolbarComponent implements OnInit {
 		{ name: 'Orange', hex: '#ffa500' }
 	];
 
-	constructor(public selection: SelectionService) {}
+	constructor(
+		public selection: SelectionService,
+		private canvasRender: CanvasRenderService
+	) {}
 
 	ngOnInit() {
 		this.loadColors();
@@ -438,8 +442,7 @@ export class ToolbarComponent implements OnInit {
 	}
 
 	private updateWireAppearance(wire: any) {
-		// Dispatch custom event to notify canvas of wire property change
-		window.dispatchEvent(new CustomEvent('wirePropertyChanged', { detail: wire }));
+		this.canvasRender.notifyWireAppearanceChange(wire);
 	}
 
 	addPin(connector: any) {
@@ -458,8 +461,7 @@ export class ToolbarComponent implements OnInit {
 
 		connector.pins.push(newPin);
 
-		// Dispatch event to notify canvas to re-render
-		window.dispatchEvent(new CustomEvent('connectorChanged', { detail: connector }));
+		this.canvasRender.requestRender();
 	}
 
 	deletePin(connector: any, pin: any) {
@@ -471,14 +473,12 @@ export class ToolbarComponent implements OnInit {
 		if (index !== -1) {
 			connector.pins.splice(index, 1);
 
-			// Dispatch event to notify canvas to re-render
-			window.dispatchEvent(new CustomEvent('connectorChanged', { detail: connector }));
+			this.canvasRender.requestRender();
 		}
 	}
 
 	onConnectorPropertyChange(connector: any) {
-		// Dispatch event to notify canvas to re-render
-		window.dispatchEvent(new CustomEvent('connectorChanged', { detail: connector }));
+		this.canvasRender.requestRender();
 	}
 }
 

@@ -1,5 +1,14 @@
 import { Injectable } from '@angular/core';
-import { Connector }  from '../Model/Connector';
+import { Connector } from '../Model/Connector';
+import {
+	getConnectorHeight,
+	getConnectorWidth,
+	getPinRowY,
+	getSnapPointLocalPosition,
+	getSnapPointStagePosition,
+	DEFAULT_CONNECTOR_WIDTH,
+	CONNECTOR_LAYOUT
+} from '../Util/ConnectorLayout';
 
 @Injectable({ providedIn: 'root' })
 export class ConnectorService {
@@ -18,4 +27,40 @@ export class ConnectorService {
 			]
 		}
 	];
+
+	getConnectorWidth(connector: Connector): number {
+		return getConnectorWidth(connector);
+	}
+
+	getConnectorHeight(connector: Connector): number {
+		return getConnectorHeight(connector);
+	}
+
+	getPinRowY(pinIndex: number): number {
+		return getPinRowY(pinIndex);
+	}
+
+	getSnapPointLocalPosition(
+		connector: Connector,
+		pinIndex: number,
+		side: 'left' | 'right'
+	): { x: number; y: number } {
+		return getSnapPointLocalPosition(connector, pinIndex, side);
+	}
+
+	getSnapPointStagePosition(
+		connector: Connector,
+		pinId: string,
+		side: 'left' | 'right'
+	): { x: number; y: number } | null {
+		return getSnapPointStagePosition(connector, pinId, side);
+	}
+
+	getLayoutConstants() {
+		return CONNECTOR_LAYOUT;
+	}
+
+	getDefaultWidth(): number {
+		return DEFAULT_CONNECTOR_WIDTH;
+	}
 }

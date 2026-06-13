@@ -1,4 +1,4 @@
-import { Injectable, signal } from '@angular/core';
+import { Injectable, computed, signal } from '@angular/core';
 
 export interface SelectionData {
 	type: 'connector' | 'pin' | 'wire';
@@ -6,11 +6,30 @@ export interface SelectionData {
 	metadata?: any;
 }
 
+export type OverlayState =
+	| { type: 'connector-resize'; data: any }
+	| { type: 'wire-anchors'; data: any }
+	| null;
+
 @Injectable({
 	providedIn: 'root'
 })
 export class SelectionService {
 	selectedObject = signal<SelectionData | null>(null);
+
+	overlay = computed<OverlayState>(() => {
+		const selected = this.selectedObject();
+		if (!selected) {
+			return null;
+		}
+		if (selected.type === 'connector') {
+			return { type: 'connector-resize', data: selected.data };
+		}
+		if (selected.type === 'wire') {
+			return { type: 'wire-anchors', data: selected.data };
+		}
+		return null;
+	});
 
 	select(data: SelectionData) {
 		this.selectedObject.set(data);
@@ -29,4 +48,3 @@ export class SelectionService {
 		return selected !== null && selected.data === data;
 	}
 }
-

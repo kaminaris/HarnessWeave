@@ -6,10 +6,22 @@ import {
 	effect
 } from '@angular/core';
 
-import Konva                from 'konva';
-import { ConnectorService } from '../Service/ConnectorService';
-import { WireService }      from '../Service/WireService';
-import { SelectionService } from '../Service/SelectionService';
+import Konva                              from 'konva';
+import { ConnectorService }               from '../Service/ConnectorService';
+import { WireService }                    from '../Service/WireService';
+import { SelectionService, OverlayState } from '../Service/SelectionService';
+import { CanvasRenderService }            from '../Service/CanvasRenderService';
+import { WireDisplay }                    from '../Model/WireDisplay';
+import { Connector }                      from '../Model/Connector';
+import {
+	applyConnectorResize,
+	ResizeState
+}                                         from '../Util/ConnectorLayout';
+
+interface KonvaWire extends WireDisplay {
+	line: Konva.Line;
+	anchors?: Record<string, Konva.Circle>;
+}
 
 @Component({
 	selector: 'app-canvas',
@@ -35,39 +47,37 @@ export class CanvasComponent implements AfterViewInit {
 	anchorLayer!: Konva.Layer;
 	selectionLayer!: Konva.Layer;
 
-	activeWire: any = null;
-	allWires: any[] = [];
+	private resizeHandles: Konva.Rect[] = [];
 
 	constructor(
 		public connectors: ConnectorService,
 		public wires: WireService,
-		public selection: SelectionService
+		public selection: SelectionService,
+		private canvasRender: CanvasRenderService
 	) {
-		// Watch SelectionService and render UI accordingly
-		// This is the ONLY place that decides what UI elements to show/hide
 		effect(() => {
-			// Guard: Only run if canvas is initialized
 			if (!this.anchorLayer || !this.selectionLayer || !this.wireLayer) {
 				return;
 			}
 
-			const selected = this.selection.selectedObject();
+			const overlay = this.selection.overlay();
+			this.syncOverlay(overlay);
+		});
 
-			// Clear everything first
-			this.hideWireAnchors();
-			this.hideConnectorResizeHandles();
-			this.resetAllWireAppearance();
-
-			// Show UI based on what's selected
-			if (selected?.type === 'connector') {
-				this.showConnectorResizeHandles(selected.data);
-			} else if (selected?.type === 'wire') {
-				this.showWireAnchors(selected.data);
-				// Highlight the selected wire
-				selected.data.line.stroke('#ffff00');
-				selected.data.line.strokeWidth(8);
-				this.wireLayer.batchDraw();
+		effect(() => {
+			this.canvasRender.renderTick();
+			if (!this.layer) {
+				return;
 			}
+			this.render();
+		});
+
+		effect(() => {
+			const wire = this.canvasRender.wireAppearanceTick();
+			if (!wire || !this.wireLayer) {
+				return;
+			}
+			this.applyWireAppearance(wire as KonvaWire);
 		});
 	}
 
@@ -75,46 +85,21 @@ export class CanvasComponent implements AfterViewInit {
 		this.initCanvas();
 		this.render();
 
-		// Handle window resize
 		window.addEventListener('resize', () => this.onWindowResize());
 
-		// Handle stage click for deselection
 		this.stage.on('click', (e) => {
 			if (e.target === this.stage) {
 				this.selection.deselect();
 			}
 		});
-
-		// Listen for wire property changes
-		window.addEventListener('wirePropertyChanged', (event: any) => {
-			this.updateWireAppearance(event.detail);
-		});
-
-		// Listen for connector changes (add/remove pins, edit pins)
-		window.addEventListener('connectorChanged', (event: any) => {
-			this.render();
-		});
 	}
 
-	private updateWireAppearance(wire: any) {
-		if (wire && wire.line) {
+	private applyWireAppearance(wire: KonvaWire) {
+		if (wire.line) {
 			wire.line.stroke(wire.stroke || '#00ff00');
 			wire.line.strokeWidth(wire.strokeWidth || 6);
 			this.wireLayer.batchDraw();
 		}
-	}
-
-	private resetAllWireAppearance() {
-		if (!this.wireLayer) {
-			return;
-		}
-		for (const wire of this.allWires) {
-			if (wire.line) {
-				wire.line.stroke(wire.stroke || '#00ff00');
-				wire.line.strokeWidth(wire.strokeWidth || 6);
-			}
-		}
-		this.wireLayer.batchDraw();
 	}
 
 	onWindowResize() {
@@ -150,8 +135,7 @@ export class CanvasComponent implements AfterViewInit {
 		this.layer.destroyChildren();
 		this.wireLayer.destroyChildren();
 		this.anchorLayer.destroyChildren();
-		this.selectionLayer.destroyChildren();
-		this.allWires = [];
+		this.clearResizeHandles();
 
 		this.renderConnectors();
 		this.renderWires();
@@ -160,179 +144,207 @@ export class CanvasComponent implements AfterViewInit {
 		this.wireLayer.draw();
 		this.anchorLayer.draw();
 		this.selectionLayer.draw();
+
+		this.syncOverlay(this.selection.overlay());
+	}
+
+	private syncOverlay(overlay: OverlayState) {
+		this.hideWireAnchors();
+		this.clearResizeHandles();
+		this.resetAllWireAppearance();
+
+		if (!overlay) {
+			return;
+		}
+
+		if (overlay.type === 'connector-resize') {
+			this.showConnectorResizeHandles(overlay.data);
+		}
+		else if (overlay.type === 'wire-anchors') {
+			this.showWireAnchors(overlay.data as KonvaWire);
+			const wire = overlay.data as KonvaWire;
+			if (wire.line) {
+				wire.line.stroke('#ffff00');
+				wire.line.strokeWidth(8);
+				this.wireLayer.batchDraw();
+			}
+		}
+	}
+
+	private resetAllWireAppearance() {
+		if (!this.wireLayer) {
+			return;
+		}
+		for (const wire of this.wires.displayWires as KonvaWire[]) {
+			if (wire.line) {
+				wire.line.stroke(wire.stroke || '#00ff00');
+				wire.line.strokeWidth(wire.strokeWidth || 6);
+			}
+		}
+		this.wireLayer.batchDraw();
 	}
 
 	renderConnectors() {
-		const FONT_SIZE = 12;
-		const ROW_HEIGHT = 22;
-		const PADDING = 8;
-		const COL1_WIDTH = 80; // Name column
-		const COL2_WIDTH = 120; // Description column
-		const TOTAL_WIDTH = COL1_WIDTH + COL2_WIDTH + PADDING * 2;
+		const layout = this.connectors.getLayoutConstants();
+		const { FONT_SIZE, ROW_HEIGHT, PADDING, COL1_WIDTH, COL2_WIDTH } = layout;
 
 		for (const c of this.connectors.connectors) {
 			const group = new Konva.Group({
 				x: c.x,
 				y: c.y,
 				draggable: true,
-				name: `connector-${c.id}`
+				name: `connector-${ c.id }`
 			});
 
-		// Store reference to group in connector for later access
-		(c as any).group = group;
+			(c as Connector & { group?: Konva.Group }).group = group;
 
-		// Use stored dimensions or calculate defaults
-		const headerHeight = ROW_HEIGHT + PADDING;
-		const rowsHeight = c.pins.length * ROW_HEIGHT;
-		const hasDescription = c.description && c.description.trim().length > 0;
-		const descriptionRowHeight = hasDescription ? ROW_HEIGHT : 0;
-		const calculatedHeight = headerHeight + rowsHeight + descriptionRowHeight + PADDING;
-		const calculatedWidth = TOTAL_WIDTH;
+			const width = this.connectors.getConnectorWidth(c);
+			const height = this.connectors.getConnectorHeight(c);
+			const headerHeight = this.connectors.getPinRowY(0);
 
-		// Use connector's stored dimensions or defaults
-		const width = c.width || calculatedWidth;
-		const height = c.height || calculatedHeight;
+			const rect = new Konva.Rect({
+				width,
+				height,
+				fill: '#1a1a1a',
+				stroke: '#555',
+				strokeWidth: 2,
+				name: 'connector-bg'
+			});
+			group.add(rect);
 
-		// Background rectangle
-		const rect = new Konva.Rect({
-			width: width,
-			height: height,
-			fill: '#1a1a1a',
-			stroke: '#555',
-			strokeWidth: 2
-		});
-		group.add(rect);
+			const typeText = new Konva.Text({
+				text: c.type || 'Connector',
+				fill: '#fff',
+				fontSize: FONT_SIZE,
+				fontWeight: 'bold',
+				x: PADDING,
+				y: PADDING / 2,
+				width: COL1_WIDTH - PADDING,
+				listening: false
+			});
+			group.add(typeText);
 
-		// Header row: type and name
-		const typeText = new Konva.Text({
-			text: c.type || 'Connector',
-			fill: '#fff',
-			fontSize: FONT_SIZE,
-			fontWeight: 'bold',
-			x: PADDING,
-			y: PADDING / 2,
-			width: COL1_WIDTH - PADDING
-		});
-		group.add(typeText);
+			const nameHeaderText = new Konva.Text({
+				text: c.name || 'N/A',
+				fill: '#fff',
+				fontSize: FONT_SIZE,
+				fontWeight: 'bold',
+				x: COL1_WIDTH + PADDING * 2,
+				y: PADDING / 2,
+				width: COL2_WIDTH - PADDING,
+				listening: false
+			});
+			group.add(nameHeaderText);
 
-		const nameHeaderText = new Konva.Text({
-			text: c.name || 'N/A',
-			fill: '#fff',
-			fontSize: FONT_SIZE,
-			fontWeight: 'bold',
-			x: COL1_WIDTH + PADDING * 2,
-			y: PADDING / 2,
-			width: COL2_WIDTH - PADDING
-		});
-		group.add(nameHeaderText);
+			group.add(
+				new Konva.Line({
+					points: [0, headerHeight, width, headerHeight],
+					stroke: '#555',
+					strokeWidth: 1,
+					listening: false
+				})
+			);
 
-		// Header line separator
-		const headerLine = new Konva.Line({
-			points: [0, headerHeight, width, headerHeight],
-			stroke: '#555',
-			strokeWidth: 1
-		});
-		group.add(headerLine);
+			group.add(
+				new Konva.Line({
+					points: [COL1_WIDTH + PADDING, 0, COL1_WIDTH + PADDING, height],
+					stroke: '#555',
+					strokeWidth: 1,
+					listening: false
+				})
+			);
 
-		// Vertical separator between columns
-		const colSeparator = new Konva.Line({
-			points: [COL1_WIDTH + PADDING, 0, COL1_WIDTH + PADDING, height],
-			stroke: '#555',
-			strokeWidth: 1
-		});
-		group.add(colSeparator);
+			c.pins.forEach((p, i) => {
+				const rowY = this.connectors.getPinRowY(i);
 
-		// Render pins as table rows
-		c.pins.forEach((p, i) => {
-			const rowY = headerHeight + i * ROW_HEIGHT;
+				if (i > 0) {
+					group.add(
+						new Konva.Line({
+							points: [0, rowY, width, rowY],
+							stroke: '#333',
+							strokeWidth: 1,
+							listening: false
+						})
+					);
+				}
 
-			// Row separator line
-			if (i > 0) {
-				const rowSeparator = new Konva.Line({
-					points: [0, rowY, width, rowY],
-					stroke: '#333',
-					strokeWidth: 1
-				});
-				group.add(rowSeparator);
+				group.add(
+					this.createSnapPoint(c.id, p.id, 'left', 0, rowY + ROW_HEIGHT / 2, c, p)
+				);
+
+				group.add(
+					new Konva.Text({
+						text: p.name,
+						fill: '#00ff00',
+						fontSize: FONT_SIZE,
+						x: PADDING,
+						y: rowY + (ROW_HEIGHT - FONT_SIZE) / 2,
+						width: COL1_WIDTH - PADDING,
+						listening: false
+					})
+				);
+
+				group.add(
+					new Konva.Text({
+						text: p.description || '',
+						fill: '#ccc',
+						fontSize: FONT_SIZE,
+						x: COL1_WIDTH + PADDING * 2,
+						y: rowY + (ROW_HEIGHT - FONT_SIZE) / 2,
+						width: COL2_WIDTH - PADDING,
+						listening: false
+					})
+				);
+
+				group.add(
+					this.createSnapPoint(
+						c.id,
+						p.id,
+						'right',
+						width,
+						rowY + ROW_HEIGHT / 2,
+						c,
+						p
+					)
+				);
+			});
+
+			const hasDescription = c.description && c.description.trim().length > 0;
+			if (hasDescription) {
+				const descRowY = headerHeight + c.pins.length * ROW_HEIGHT;
+				group.add(
+					new Konva.Line({
+						points: [0, descRowY, width, descRowY],
+						stroke: '#333',
+						strokeWidth: 1,
+						listening: false
+					})
+				);
+				group.add(
+					new Konva.Text({
+						text: c.description,
+						fill: '#aaa',
+						fontSize: FONT_SIZE - 2,
+						x: PADDING,
+						y: descRowY + (ROW_HEIGHT - FONT_SIZE) / 2,
+						width: width - PADDING * 2,
+						listening: false
+					})
+				);
 			}
 
-			// Create snap point for left side
-			group.add(
-				this.createSnapPoint(c.id, p.id, 'left', 0, rowY + ROW_HEIGHT / 2, c, p)
-			);
-
-			// Left column: Pin name
-			const pinNameText = new Konva.Text({
-				text: p.name,
-				fill: '#00ff00',
-				fontSize: FONT_SIZE,
-				x: PADDING,
-				y: rowY + (ROW_HEIGHT - FONT_SIZE) / 2,
-				width: COL1_WIDTH - PADDING
-			});
-			group.add(pinNameText);
-
-			// Right column: Pin description
-			const pinDescriptionText = new Konva.Text({
-				text: p.description || '',
-				fill: '#ccc',
-				fontSize: FONT_SIZE,
-				x: COL1_WIDTH + PADDING * 2,
-				y: rowY + (ROW_HEIGHT - FONT_SIZE) / 2,
-				width: COL2_WIDTH - PADDING
-			});
-			group.add(pinDescriptionText);
-
-			// Create snap point for right side
-			group.add(
-				this.createSnapPoint(c.id, p.id, 'right', width, rowY + ROW_HEIGHT / 2, c, p)
-			);
-		});
-
-		// Description row (if description exists)
-		if (hasDescription) {
-			const descRowY = headerHeight + rowsHeight;
-
-			// Description separator line
-			const descSeparator = new Konva.Line({
-				points: [0, descRowY, width, descRowY],
-				stroke: '#333',
-				strokeWidth: 1
-			});
-			group.add(descSeparator);
-
-			// Description text (spanning both columns)
-			const descriptionDisplay = new Konva.Text({
-				text: c.description,
-				fill: '#aaa',
-				fontSize: FONT_SIZE - 2,
-				x: PADDING,
-				y: descRowY + (ROW_HEIGHT - FONT_SIZE) / 2,
-				width: width - PADDING * 2
-			});
-			group.add(descriptionDisplay);
-		}
-
-			// Add click handler to connector group
 			group.on('click', (e) => {
-				if (e.target === group || e.target === rect) {
-					this.selection.select({
-						type: 'connector',
-						data: c
-					});
+				if ((e.target as Konva.Node & { meta?: unknown }).meta) {
+					return;
 				}
+				this.selection.select({ type: 'connector', data: c });
 			});
 
-			// Add drag handlers
 			group.on('dragmove', () => {
-
-				// Update connector position
 				c.x = group.x();
 				c.y = group.y();
-
-				// Update all wires connected to this connector
-				this.updateConnectedWires(c.id);
-
+				this.wires.updateWiresForConnector(c.id);
+				this.redrawAllWireCurves();
 				this.wireLayer.batchDraw();
 			});
 
@@ -350,8 +362,8 @@ export class CanvasComponent implements AfterViewInit {
 		side: 'left' | 'right',
 		x: number,
 		y: number,
-		connector: any,
-		pin: any
+		connector: Connector,
+		pin: { id: string; name: string; description?: string }
 	) {
 		const circle = new Konva.Circle({
 			x,
@@ -362,9 +374,9 @@ export class CanvasComponent implements AfterViewInit {
 			strokeWidth: 1
 		});
 
-		(circle as any).meta = { connectorId, pinId, side };
+		(circle as Konva.Circle & { meta: unknown }).meta = { connectorId, pinId, side };
 
-		circle.on('mousedown', (e) => this.startWire(e, circle));
+		circle.on('mousedown', (e) => this.startWire(e, circle, connector, side, pinId));
 		circle.on('click', (e) => {
 			e.cancelBubble = true;
 			this.selection.select({
@@ -375,7 +387,7 @@ export class CanvasComponent implements AfterViewInit {
 		});
 		circle.on('mouseenter', () => circle.fill('red'));
 		circle.on('mouseleave', () => {
-			if (!this.activeWire) {
+			if (!this.wires.activeWire) {
 				circle.fill('orange');
 			}
 		});
@@ -383,49 +395,33 @@ export class CanvasComponent implements AfterViewInit {
 		return circle;
 	}
 
-	startWire(e: any, circle: Konva.Circle) {
-		const pos = this.stage.getPointerPosition();
-		const meta = (circle as any).meta;
-		if (!pos || !meta) {
+	startWire(
+		_e: Konva.KonvaEventObject<MouseEvent>,
+		circle: Konva.Circle,
+		connector: Connector,
+		side: 'left' | 'right',
+		pinId: string
+	) {
+		const pos = this.connectors.getSnapPointStagePosition(connector, pinId, side);
+		if (!pos) {
 			return;
 		}
 
-		this.activeWire = {
-			from: meta,
-			startX: pos.x,
-			startY: pos.y,
-			endX: pos.x,
-			endY: pos.y,
-			controlStartX: pos.x + 50,
-			controlStartY: pos.y,
-			controlEndX: pos.x - 50,
-			controlEndY: pos.y,
-			stroke: '#00ff00',
-			strokeWidth: 6
-		};
+		const from = { connectorId: connector.id, pinId, side };
+		this.wires.activeWire = this.wires.createActiveWire(from, pos.x, pos.y);
 
+		const wire = this.wires.activeWire as KonvaWire;
 		const line = new Konva.Line({
-			points: this.generateBezierCurvePoints(
-				this.activeWire.startX,
-				this.activeWire.startY,
-				this.activeWire.endX,
-				this.activeWire.endY,
-				this.activeWire.controlStartX,
-				this.activeWire.controlStartY,
-				this.activeWire.controlEndX,
-				this.activeWire.controlEndY
-			),
-			stroke: this.activeWire.stroke,
-			strokeWidth: this.activeWire.strokeWidth,
+			points: this.wires.getBezierPoints(wire),
+			stroke: wire.stroke,
+			strokeWidth: wire.strokeWidth,
 			lineCap: 'round',
 			lineJoin: 'round',
 			hitStrokeWidth: 20
 		});
 
-		this.activeWire.line = line;
+		wire.line = line;
 		this.wireLayer.add(line);
-
-		// Disable dragging on all connectors while placing wire
 		this.disableConnectorDragging();
 
 		this.stage.on('mousemove', () => this.updateWire());
@@ -433,129 +429,101 @@ export class CanvasComponent implements AfterViewInit {
 	}
 
 	finishWire() {
-		if (!this.activeWire) {
+		if (!this.wires.activeWire) {
 			return;
 		}
 
 		this.stage.off('mousemove');
 		this.stage.off('mouseup');
 
-		// Store the finished wire
-		const finishedWire = this.activeWire;
-		this.allWires.push(finishedWire);
+		const finished = this.wires.commitActiveWire() as KonvaWire;
+		if (!finished) {
+			return;
+		}
 
-		// Add click handler to the wire line
-		finishedWire.line.on('click', (e: any) => {
+		finished.line.on('click', (e) => {
 			e.cancelBubble = true;
-			this.selection.select({
-				type: 'wire',
-				data: finishedWire
-			});
+			this.selection.select({ type: 'wire', data: finished });
 		});
 
-		// Reset snap point colors
-		this.layer.find('Circle').forEach((circle: any) => {
-			circle.fill('orange');
+		this.layer.find('Circle').forEach((circle) => {
+			(circle as Konva.Circle).fill('orange');
 		});
 
-		// Enable dragging on all connectors again
 		this.enableConnectorDragging();
-
-		this.activeWire = null;
 	}
 
 	private disableConnectorDragging() {
 		for (const c of this.connectors.connectors) {
-			if ((c as any).group) {
-				(c as any).group.draggable(false);
+			const group = (c as Connector & { group?: Konva.Group }).group;
+			if (group) {
+				group.draggable(false);
 			}
 		}
 	}
 
 	private enableConnectorDragging() {
 		for (const c of this.connectors.connectors) {
-			if ((c as any).group) {
-				(c as any).group.draggable(true);
+			const group = (c as Connector & { group?: Konva.Group }).group;
+			if (group) {
+				group.draggable(true);
 			}
 		}
 	}
 
 	updateWire() {
-		if (!this.activeWire) {
+		const wire = this.wires.activeWire as KonvaWire | null;
+		if (!wire) {
 			return;
 		}
 
 		const pos = this.stage.getPointerPosition();
-		this.activeWire.endX = pos!.x;
-		this.activeWire.endY = pos!.y;
+		if (!pos) {
+			return;
+		}
 
-		// Auto-adjust control point for the end
-		const dx = this.activeWire.endX - this.activeWire.startX;
-		this.activeWire.controlEndX = this.activeWire.endX - dx * 0.3;
-		this.activeWire.controlEndY = this.activeWire.endY;
-
-		const bezierPoints = this.generateBezierCurvePoints(
-			this.activeWire.startX,
-			this.activeWire.startY,
-			this.activeWire.endX,
-			this.activeWire.endY,
-			this.activeWire.controlStartX,
-			this.activeWire.controlStartY,
-			this.activeWire.controlEndX,
-			this.activeWire.controlEndY
-		);
-
-		this.activeWire.line.points(bezierPoints);
+		this.wires.updateActiveWireEnd(wire, pos.x, pos.y);
+		wire.line.points(this.wires.getBezierPoints(wire));
 		this.wireLayer.batchDraw();
 	}
 
-	generateBezierCurvePoints(
-		x1: number,
-		y1: number,
-		x2: number,
-		y2: number,
-		cx1: number = 0,
-		cy1: number = 0,
-		cx2: number = 0,
-		cy2: number = 0,
-		resolution: number = 50
-	): number[] {
-		const points: number[] = [];
+	renderWires() {
+		for (const wire of this.wires.displayWires as KonvaWire[]) {
+			const line = new Konva.Line({
+				points: this.wires.getBezierPoints(wire),
+				stroke: wire.stroke,
+				strokeWidth: wire.strokeWidth,
+				lineCap: 'round',
+				lineJoin: 'round',
+				hitStrokeWidth: 20
+			});
 
-		// If control points not provided, calculate defaults
-		if (cx1 === 0 && cy1 === 0 && cx2 === 0 && cy2 === 0) {
-			const dx = x2 - x1;
-			cx1 = x1 + dx * 0.3;
-			cy1 = (y1 + y2) / 2;
-			cx2 = x1 + dx * 0.7;
-			cy2 = (y1 + y2) / 2;
+			wire.line = line;
+			line.on('click', (e) => {
+				e.cancelBubble = true;
+				this.selection.select({ type: 'wire', data: wire });
+			});
+
+			this.wireLayer.add(line);
 		}
-
-		// Generate cubic Bézier curve points
-		// B(t) = (1-t)³P₀ + 3(1-t)²tP₁ + 3(1-t)t²P₂ + t³P₃
-		for (let i = 0; i <= resolution; i++) {
-			const t = i / resolution;
-			const mt = 1 - t;
-			const mt2 = mt * mt;
-			const mt3 = mt2 * mt;
-			const t2 = t * t;
-			const t3 = t2 * t;
-
-			const x = mt3 * x1 + 3 * mt2 * t * cx1 + 3 * mt * t2 * cx2 + t3 * x2;
-			const y = mt3 * y1 + 3 * mt2 * t * cy1 + 3 * mt * t2 * cy2 + t3 * y2;
-
-			points.push(x, y);
-		}
-
-		return points;
 	}
 
-	showWireAnchors(wire: any) {
-		this.hideWireAnchors();
+	private redrawAllWireCurves() {
+		for (const wire of this.wires.displayWires as KonvaWire[]) {
+			if (wire.line) {
+				wire.line.points(this.wires.getBezierPoints(wire));
+			}
+		}
+	}
 
-		// Create lines connecting points to control points
+	showWireAnchors(wire: KonvaWire) {
 		const startControlLine = new Konva.Line({
-			points: [wire.startX, wire.startY, wire.controlStartX, wire.controlStartY],
+			points: [
+				wire.startX,
+				wire.startY,
+				wire.controlStartX,
+				wire.controlStartY
+			],
 			stroke: '#888',
 			strokeWidth: 1,
 			dash: [5, 5],
@@ -573,42 +541,34 @@ export class CanvasComponent implements AfterViewInit {
 		this.anchorLayer.add(startControlLine);
 		this.anchorLayer.add(endControlLine);
 
-		// Create anchor points
 		const startAnchor = this.createAnchor(
 			wire.startX,
 			wire.startY,
 			'start',
-			() => this.onAnchorDragEnd(wire),
 			wire,
 			startControlLine,
 			endControlLine
 		);
-
 		const endAnchor = this.createAnchor(
 			wire.endX,
 			wire.endY,
 			'end',
-			() => this.onAnchorDragEnd(wire),
 			wire,
 			startControlLine,
 			endControlLine
 		);
-
 		const controlStartAnchor = this.createAnchor(
 			wire.controlStartX,
 			wire.controlStartY,
 			'controlStart',
-			() => this.onAnchorDragEnd(wire),
 			wire,
 			startControlLine,
 			endControlLine
 		);
-
 		const controlEndAnchor = this.createAnchor(
 			wire.controlEndX,
 			wire.controlEndY,
 			'controlEnd',
-			() => this.onAnchorDragEnd(wire),
 			wire,
 			startControlLine,
 			endControlLine
@@ -629,19 +589,17 @@ export class CanvasComponent implements AfterViewInit {
 			return;
 		}
 		this.anchorLayer.destroyChildren();
-		this.anchorLayer.draw();
 	}
 
 	createAnchor(
 		x: number,
 		y: number,
 		type: string,
-		onDragEnd: () => void,
-		wire: any,
-		startControlLine: any,
-		endControlLine: any
+		wire: KonvaWire,
+		startControlLine: Konva.Line,
+		endControlLine: Konva.Line
 	) {
-		const colors: { [key: string]: string } = {
+		const colors: Record<string, string> = {
 			start: '#00ffff',
 			end: '#00ffff',
 			controlStart: '#ffff00',
@@ -656,140 +614,91 @@ export class CanvasComponent implements AfterViewInit {
 			stroke: 'white',
 			strokeWidth: 2,
 			draggable: true,
-			name: `anchor-${type}`
+			name: `anchor-${ type }`
 		});
 
-		anchor.on('dragmove', (e) => {
+		anchor.on('dragmove', () => {
 			const selected = this.selection.getSelected();
-			const selectedWire = selected?.type === 'wire' ? selected.data : null;
+			if (selected?.type !== 'wire' || selected.data !== wire) {
+				return;
+			}
 
-			if (selectedWire === wire) {
-				if (type === 'start') {
-					wire.startX = anchor.x();
-					wire.startY = anchor.y();
-					startControlLine.points([wire.startX, wire.startY, wire.controlStartX, wire.controlStartY]);
-				} else if (type === 'end') {
-					wire.endX = anchor.x();
-					wire.endY = anchor.y();
-					endControlLine.points([wire.endX, wire.endY, wire.controlEndX, wire.controlEndY]);
-				} else if (type === 'controlStart') {
-					wire.controlStartX = anchor.x();
-					wire.controlStartY = anchor.y();
-					startControlLine.points([wire.startX, wire.startY, wire.controlStartX, wire.controlStartY]);
-				} else if (type === 'controlEnd') {
-					wire.controlEndX = anchor.x();
-					wire.controlEndY = anchor.y();
-					endControlLine.points([wire.endX, wire.endY, wire.controlEndX, wire.controlEndY]);
-				}
-
-				// Update wire curve
-				const bezierPoints = this.generateBezierCurvePoints(
+			if (type === 'start') {
+				wire.startX = anchor.x();
+				wire.startY = anchor.y();
+				startControlLine.points([
 					wire.startX,
 					wire.startY,
+					wire.controlStartX,
+					wire.controlStartY
+				]);
+			}
+			else if (type === 'end') {
+				wire.endX = anchor.x();
+				wire.endY = anchor.y();
+				endControlLine.points([
 					wire.endX,
 					wire.endY,
-					wire.controlStartX,
-					wire.controlStartY,
 					wire.controlEndX,
 					wire.controlEndY
-				);
-
-				wire.line.points(bezierPoints);
-				this.wireLayer.batchDraw();
-				this.anchorLayer.batchDraw();
+				]);
 			}
+			else if (type === 'controlStart') {
+				wire.controlStartX = anchor.x();
+				wire.controlStartY = anchor.y();
+				startControlLine.points([
+					wire.startX,
+					wire.startY,
+					wire.controlStartX,
+					wire.controlStartY
+				]);
+			}
+			else if (type === 'controlEnd') {
+				wire.controlEndX = anchor.x();
+				wire.controlEndY = anchor.y();
+				endControlLine.points([
+					wire.endX,
+					wire.endY,
+					wire.controlEndX,
+					wire.controlEndY
+				]);
+			}
+
+			wire.line.points(this.wires.getBezierPoints(wire));
+			this.wireLayer.batchDraw();
+			this.anchorLayer.batchDraw();
 		});
 
-		anchor.on('dragend', onDragEnd);
+		anchor.on('dragend', () => {
+			this.showWireAnchors(wire);
+		});
 
 		this.anchorLayer.add(anchor);
 		return anchor;
 	}
 
-	onAnchorDragEnd(wire: any) {
-		// Update anchors display
-		this.showWireAnchors(wire);
-	}
+	private showConnectorResizeHandles(connector: Connector) {
+		const layout = this.connectors.getLayoutConstants();
+		const HANDLE_SIZE = layout.HANDLE_SIZE;
 
-	renderWires() {
-		for (const w of this.wires.wires) {
-			// placeholder for committed wires
-		}
-	}
+		const width = this.connectors.getConnectorWidth(connector);
+		const height = this.connectors.getConnectorHeight(connector);
 
-	private updateConnectedWires(connectorId: string) {
-		const FONT_SIZE = 12;
-		const ROW_HEIGHT = 22;
-		const PADDING = 8;
-		const COL1_WIDTH = 80;
-		const TOTAL_WIDTH = COL1_WIDTH + 120 + PADDING * 2;
-		const HEADER_HEIGHT = ROW_HEIGHT + PADDING;
-
-		for (const wire of this.allWires) {
-			// Check if wire starts from this connector
-			if (wire.from.connectorId === connectorId) {
-				const connector = this.connectors.connectors.find(c => c.id === connectorId);
-				if (connector) {
-					const pinIndex = connector.pins.findIndex(p => p.id === wire.from.pinId);
-					if (pinIndex !== -1) {
-						const rowY = HEADER_HEIGHT + pinIndex * ROW_HEIGHT;
-						const snapPointY = rowY + ROW_HEIGHT / 2;
-						const x = wire.from.side === 'left' ? 0 : TOTAL_WIDTH;
-						wire.startX = connector.x + x;
-						wire.startY = connector.y + snapPointY;
-					}
-				}
-			}
-
-			// Update the wire curve
-			const bezierPoints = this.generateBezierCurvePoints(
-				wire.startX,
-				wire.startY,
-				wire.endX,
-				wire.endY,
-				wire.controlStartX,
-				wire.controlStartY,
-				wire.controlEndX,
-				wire.controlEndY
-			);
-
-			wire.line.points(bezierPoints);
-		}
-	}
-
-	private showConnectorResizeHandles(connector: any) {
-		if (!this.selectionLayer) {
-			return;
-		}
-		this.hideConnectorResizeHandles();
-
-		const HANDLE_SIZE = 10;
-		const PADDING = 8;
-		const COL1_WIDTH = 80;
-		const COL2_WIDTH = 120;
-		const TOTAL_WIDTH = COL1_WIDTH + COL2_WIDTH + PADDING * 2;
-
-		// Use stored connector dimensions or calculate from current render
-		const width = connector.width || TOTAL_WIDTH;
-		const height = connector.height || this.calculateConnectorHeight(connector);
-
-		// Store initial values for this resize operation
-		const resizeState = {
+		const resizeState: ResizeState = {
 			startX: connector.x,
 			startY: connector.y,
 			initialWidth: width,
 			initialHeight: height
 		};
 
-		// Corner positions relative to connector (add connector position to get stage coordinates)
 		const corners = [
-			{ x: connector.x, y: connector.y }, // top-left
-			{ x: connector.x + width, y: connector.y }, // top-right
-			{ x: connector.x + width, y: connector.y + height }, // bottom-right
-			{ x: connector.x, y: connector.y + height } // bottom-left
+			{ x: connector.x, y: connector.y },
+			{ x: connector.x + width, y: connector.y },
+			{ x: connector.x + width, y: connector.y + height },
+			{ x: connector.x, y: connector.y + height }
 		];
 
-		corners.forEach((corner, index) => {
+		this.resizeHandles = corners.map((corner, index) => {
 			const handle = new Konva.Rect({
 				x: corner.x - HANDLE_SIZE / 2,
 				y: corner.y - HANDLE_SIZE / 2,
@@ -799,106 +708,89 @@ export class CanvasComponent implements AfterViewInit {
 				stroke: '#fff',
 				strokeWidth: 1,
 				draggable: true,
-				name: `resize-handle-${index}`
+				name: `resize-handle-${ index }`
 			});
 
 			handle.on('dragmove', () => {
-				this.handleConnectorResizeDrag(connector, index, handle.x(), handle.y(), resizeState);
+				this.handleConnectorResizeDrag(
+					connector,
+					index,
+					handle.x() + HANDLE_SIZE / 2,
+					handle.y() + HANDLE_SIZE / 2,
+					resizeState
+				);
+				this.updateResizeHandlePositions(connector);
 			});
 
 			handle.on('dragend', () => {
-				// Trigger a re-render and update the effect by setting selection again
-				this.render();
-				this.selection.select({
-					type: 'connector',
-					data: connector
-				});
+				this.canvasRender.requestRender();
+				this.selection.select({ type: 'connector', data: connector });
 			});
 
 			this.selectionLayer.add(handle);
+			return handle;
 		});
 
 		this.selectionLayer.draw();
 	}
 
-	private hideConnectorResizeHandles() {
-		if (!this.selectionLayer) {
-			return;
-		}
-		const handles = this.selectionLayer.find('[name^="resize-handle"]');
-		handles.forEach((h: any) => h.destroy());
-		this.selectionLayer.draw();
+	private updateResizeHandlePositions(connector: Connector) {
+		const layout = this.connectors.getLayoutConstants();
+		const HANDLE_SIZE = layout.HANDLE_SIZE;
+		const width = this.connectors.getConnectorWidth(connector);
+		const height = this.connectors.getConnectorHeight(connector);
+
+		const corners = [
+			{ x: connector.x, y: connector.y },
+			{ x: connector.x + width, y: connector.y },
+			{ x: connector.x + width, y: connector.y + height },
+			{ x: connector.x, y: connector.y + height }
+		];
+
+		corners.forEach((corner, index) => {
+			const handle = this.resizeHandles[index];
+			if (handle) {
+				handle.x(corner.x - HANDLE_SIZE / 2);
+				handle.y(corner.y - HANDLE_SIZE / 2);
+			}
+		});
+
+		this.selectionLayer.batchDraw();
 	}
 
-	private calculateConnectorHeight(connector: any): number {
-		const ROW_HEIGHT = 22;
-		const PADDING = 8;
-		const headerHeight = ROW_HEIGHT + PADDING;
-		const rowsHeight = connector.pins.length * ROW_HEIGHT;
-		const hasDescription = connector.description && connector.description.trim().length > 0;
-		const descriptionRowHeight = hasDescription ? ROW_HEIGHT : 0;
-		return headerHeight + rowsHeight + descriptionRowHeight + PADDING;
+	private clearResizeHandles() {
+		this.resizeHandles.forEach((h) => h.destroy());
+		this.resizeHandles = [];
 	}
 
-	private handleConnectorResizeDrag(connector: any, cornerIndex: number, handleX: number, handleY: number, resizeState: any) {
-		const PADDING = 8;
-		const COL1_WIDTH = 80;
-		const COL2_WIDTH = 120;
-		const MIN_WIDTH = COL1_WIDTH + COL2_WIDTH + PADDING * 2;
-		const MIN_HEIGHT = 22 + PADDING; // At least header height
+	private handleConnectorResizeDrag(
+		connector: Connector,
+		cornerIndex: number,
+		handleCenterX: number,
+		handleCenterY: number,
+		resizeState: ResizeState
+	) {
+		applyConnectorResize(
+			connector,
+			cornerIndex,
+			handleCenterX,
+			handleCenterY,
+			resizeState
+		);
 
-		let newWidth = resizeState.initialWidth;
-		let newHeight = resizeState.initialHeight;
-		let newX = resizeState.startX;
-		let newY = resizeState.startY;
-
-		// Determine which corner is being dragged and calculate new dimensions
-		switch (cornerIndex) {
-			case 0: // top-left - resize from top-left
-				newWidth = Math.max(MIN_WIDTH, resizeState.initialWidth - (handleX - resizeState.startX));
-				newHeight = Math.max(MIN_HEIGHT, resizeState.initialHeight - (handleY - resizeState.startY));
-				newX = resizeState.startX + (resizeState.initialWidth - newWidth);
-				newY = resizeState.startY + (resizeState.initialHeight - newHeight);
-				break;
-			case 1: // top-right - resize from top-right
-				newWidth = Math.max(MIN_WIDTH, handleX - resizeState.startX);
-				newHeight = Math.max(MIN_HEIGHT, resizeState.initialHeight - (handleY - resizeState.startY));
-				newY = resizeState.startY + (resizeState.initialHeight - newHeight);
-				break;
-			case 2: // bottom-right - resize from bottom-right
-				newWidth = Math.max(MIN_WIDTH, handleX - resizeState.startX);
-				newHeight = Math.max(MIN_HEIGHT, handleY - resizeState.startY);
-				break;
-			case 3: // bottom-left - resize from bottom-left
-				newWidth = Math.max(MIN_WIDTH, resizeState.initialWidth - (handleX - resizeState.startX));
-				newHeight = Math.max(MIN_HEIGHT, handleY - resizeState.startY);
-				newX = resizeState.startX + (resizeState.initialWidth - newWidth);
-				break;
-		}
-
-		connector.x = newX;
-		connector.y = newY;
-		connector.width = newWidth;
-		connector.height = newHeight;
-
-		// Update the connector group position and size without destroying
-		if ((connector as any).group) {
-			const group = (connector as any).group;
-			group.x(newX);
-			group.y(newY);
-
-			// Update the background rectangle size
-			const rect = group.findOne('Rect');
-			if (rect && rect.name() !== 'resize-handle' && !rect.name().includes('anchor')) {
-				rect.width(newWidth);
-				rect.height(newHeight);
+		const group = (connector as Connector & { group?: Konva.Group }).group;
+		if (group) {
+			group.x(connector.x);
+			group.y(connector.y);
+			const rect = group.findOne('.connector-bg') as Konva.Rect;
+			if (rect) {
+				rect.width(this.connectors.getConnectorWidth(connector));
+				rect.height(this.connectors.getConnectorHeight(connector));
 			}
 		}
 
-		// Update connected wires
-		this.updateConnectedWires(connector.id);
-
-		// Draw only the affected layers without full re-render
+		this.wires.updateWiresForConnector(connector.id);
+		this.redrawAllWireCurves();
 		this.layer.batchDraw();
 		this.wireLayer.batchDraw();
 	}
