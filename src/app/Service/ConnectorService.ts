@@ -6,13 +6,15 @@ export class ConnectorService {
 	connectors: Connector[] = [
 		{
 			id: 'J1',
-			title: 'Vesc UART',
+			type: 'JWPF-3',
+			name: 'Main Connector',
+			description: 'Some example description',
 			x: 100,
 			y: 100,
 			pins: [
-				{ id: 'p1', name: 'GND' },
-				{ id: 'p2', name: 'TX' },
-				{ id: 'p3', name: 'RX' }
+				{ id: 'pin-j1-01', name: 'A1', description: 'TX' },
+				{ id: 'pin-j1-02', name: 'B1', description: 'GND' },
+				{ id: 'pin-j1-03', name: 'C2', description: 'RX' }
 			]
 		}
 	];
