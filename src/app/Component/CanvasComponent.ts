@@ -733,7 +733,12 @@ export class CanvasComponent implements AfterViewInit {
 				lineCap: 'round',
 				lineJoin: 'round',
 				hitStrokeWidth: 0,
-				listening: false
+				listening: false,
+				shadowColor: 'white',
+				shadowBlur: 2,
+				shadowOpacity: 1,
+				shadowOffsetX: 0,
+				shadowOffsetY: 0,
 			});
 
 			// Main line (primary color)
