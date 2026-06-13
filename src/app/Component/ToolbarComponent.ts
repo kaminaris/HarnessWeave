@@ -6,6 +6,7 @@ import { CanvasRenderService } from '../Service/CanvasRenderService';
 import { ConnectorService } from '../Service/ConnectorService';
 import { WireService } from '../Service/WireService';
 import { HarnessStateService } from '../Service/HarnessStateService';
+import { parseColorCode, getHexColor } from '../Util/WireColorMapping';
 
 interface WireColor {
 	name: string;
@@ -110,24 +111,32 @@ interface WireColor {
 									<button class="btn-delete" (click)="deleteWire(selection.data)" title="Delete wire">×</button>
 								</div>
 								<div class="property">
-									<label>Thickness:</label>
+									<label>Color Code:</label>
+									<input type="text" class="form-control form-control-sm" [(ngModel)]="selection.data.colorCode" (ngModelChange)="onColorCodeChange(selection.data)" placeholder="e.g., BN, BNWH, GN, RD" />
+									<small class="text-muted" style="display: block; margin-top: 4px;">Auto-sets primary & secondary colors. Leave empty for manual selection.</small>
+								</div>
+								<div class="property">
+									<label>Display Thickness:</label>
 									<input type="number" class="form-control form-control-sm" [(ngModel)]="selection.data.strokeWidth" (change)="onThicknessChange(selection.data)" min="1" max="20" />
 								</div>
 								<div class="property">
-									<label>Color:</label>
-									<div class="color-presets">
-										@for (color of wireColors; track color.hex) {
-											<button
-												class="color-preset"
-												[style.background-color]="color.hex"
-												[class.active]="selection.data.stroke === color.hex"
-												(click)="selectColor(selection.data, color)"
-												[title]="color.name"
-											></button>
-										}
-										<button class="color-preset-add" (click)="showColorPicker = !showColorPicker" title="Add custom color">
-											+
-										</button>
+									<label>Primary Color:</label>
+									<div class="color-picker-row">
+										<div class="color-presets">
+											@for (color of wireColors; track color.hex) {
+												<button
+													class="color-preset"
+													[style.background-color]="color.hex"
+													[class.active]="selection.data.stroke === color.hex"
+													(click)="selectColor(selection.data, color)"
+													[title]="color.name"
+												></button>
+											}
+											<button class="color-preset-add" (click)="showColorPicker = !showColorPicker" title="Add custom color">
+												+
+											</button>
+										</div>
+										<input type="color" class="form-control form-control-sm" style="width: 60px;" [(ngModel)]="selection.data.stroke" />
 									</div>
 									@if (showColorPicker) {
 										<div class="color-picker-container">
@@ -138,6 +147,17 @@ interface WireColor {
 											</button>
 										</div>
 									}
+								</div>
+								<div class="property">
+									<label>Secondary/Outline Color:</label>
+									<div class="color-picker-row">
+										<input type="color" class="form-control form-control-sm" style="width: 100%;" [(ngModel)]="selection.data.outlineColor" />
+									</div>
+									<small class="text-muted" style="display: block; margin-top: 4px;">Sets outline color for duo-color effect. Auto-set by color code if used.</small>
+								</div>
+								<div class="property">
+									<label>Real Thickness:</label>
+									<input type="text" class="form-control form-control-sm" [(ngModel)]="selection.data.thickness" placeholder="e.g., AWG 22, 0.5mm" />
 								</div>
 								<hr class="my-2" style="border-color: #444;" />
 								<div class="property">
@@ -250,15 +270,27 @@ interface WireColor {
 				border-color: #fff;
 			}
 
-			.color-picker-container {
-				background: #2a2a2a;
-				border: 1px solid #444;
-				border-radius: 4px;
-				padding: 12px;
-				margin-top: 8px;
-			}
+		.color-picker-container {
+			background: #2a2a2a;
+			border: 1px solid #444;
+			border-radius: 4px;
+			padding: 12px;
+			margin-top: 8px;
+		}
 
-			.btn {
+		.color-picker-row {
+			display: flex;
+			gap: 8px;
+			align-items: center;
+			margin-top: 8px;
+		}
+
+		.color-picker-row .color-presets {
+			flex: 1;
+			margin-top: 0;
+		}
+
+		.btn {
 				background: #0d6efd;
 				border: none;
 				color: #fff;
@@ -653,5 +685,19 @@ export class ToolbarComponent implements OnInit {
 
 		this.selection.deselect();
 		this.canvasRender.requestRender();
+	}
+
+	onColorCodeChange(wire: any) {
+		if (!wire.colorCode || wire.colorCode.trim() === '') {
+			return;
+		}
+
+		const colors = parseColorCode(wire.colorCode);
+		if (colors) {
+			const [primaryCode, secondaryCode] = colors;
+			wire.stroke = getHexColor(primaryCode);
+			wire.outlineColor = getHexColor(secondaryCode);
+			this.canvasRender.requestRender();
+		}
 	}
 }

@@ -6,20 +6,21 @@ import {
 	effect
 } from '@angular/core';
 
-import Konva                              from 'konva';
-import { ConnectorService }               from '../Service/ConnectorService';
-import { WireService }                    from '../Service/WireService';
-import { SelectionService, OverlayState } from '../Service/SelectionService';
-import { CanvasRenderService }            from '../Service/CanvasRenderService';
-import { WireDisplay }                    from '../Model/WireDisplay';
-import { Connector }                      from '../Model/Connector';
+import Konva                                           from 'konva';
+import { ConnectorService }                            from '../Service/ConnectorService';
+import { WireService }                                 from '../Service/WireService';
+import { SelectionService, OverlayState }              from '../Service/SelectionService';
+import { CanvasRenderService }                         from '../Service/CanvasRenderService';
+import { WireDisplay }                                 from '../Model/WireDisplay';
+import { Connector }                                   from '../Model/Connector';
 import {
 	applyConnectorResize,
 	ResizeState
-}                                         from '../Util/ConnectorLayout';
+}                                                      from '../Util/ConnectorLayout';
+import { parseColorCode, getHexColor } from '../Util/WireColorMapping';
 
 interface KonvaWire extends WireDisplay {
-	line: Konva.Line;
+	line: Konva.Line | Konva.Line[];
 	anchors?: Record<string, Konva.Circle>;
 }
 
@@ -48,6 +49,12 @@ export class CanvasComponent implements AfterViewInit {
 	selectionLayer!: Konva.Layer;
 
 	private resizeHandles: Konva.Rect[] = [];
+	private zoomLevel = 1;
+	private minZoom = 0.1;
+	private maxZoom = 5;
+	private isPanning = false;
+	private panStartX = 0;
+	private panStartY = 0;
 
 	constructor(
 		public connectors: ConnectorService,
@@ -89,6 +96,13 @@ export class CanvasComponent implements AfterViewInit {
 		window.addEventListener('resize', () => this.onWindowResize());
 		window.addEventListener('keydown', (e) => this.onKeyDown(e));
 
+		// Zoom and pan functionality
+		this.stage.on('wheel', (e) => this.onMouseWheel(e));
+		this.stage.on('mousedown', (e) => this.onStageMouseDown(e));
+		this.stage.on('mousemove', () => this.onStageMouseMove());
+		this.stage.on('mouseup', () => this.onStageMouseUp());
+		this.stage.on('mouseleave', () => this.onStageMouseUp());
+
 		this.stage.on('click', (e) => {
 			if (e.target === this.stage) {
 				this.selection.deselect();
@@ -104,7 +118,7 @@ export class CanvasComponent implements AfterViewInit {
 			}
 
 			if (selected.type === 'connector') {
-				if (!confirm(`Delete connector "${selected.data.name}"? All connected wires will also be deleted.`)) {
+				if (!confirm(`Delete connector "${ selected.data.name }"? All connected wires will also be deleted.`)) {
 					return;
 				}
 
@@ -123,7 +137,8 @@ export class CanvasComponent implements AfterViewInit {
 
 				this.selection.deselect();
 				this.render();
-			} else if (selected.type === 'wire') {
+			}
+			else if (selected.type === 'wire') {
 				if (!confirm('Delete this wire?')) {
 					return;
 				}
@@ -139,10 +154,82 @@ export class CanvasComponent implements AfterViewInit {
 		}
 	}
 
+	private onMouseWheel(e: Konva.KonvaEventObject<WheelEvent>) {
+		e.evt.preventDefault();
+
+		const stage = this.stage;
+		const oldScale = stage.scaleX();
+		const pointer = stage.getPointerPosition();
+
+		if (!pointer) return;
+
+		const mousePointTo = {
+			x: (pointer.x - stage.x()) / oldScale,
+			y: (pointer.y - stage.y()) / oldScale,
+		};
+
+		// Zoom direction
+		const direction = e.evt.deltaY > 0 ? -1 : 1;
+		const newScale = Math.max(this.minZoom, Math.min(this.maxZoom, oldScale + direction * 0.1));
+
+		this.zoomLevel = newScale;
+
+		stage.scale({ x: newScale, y: newScale });
+
+		const newPos = {
+			x: pointer.x - mousePointTo.x * newScale,
+			y: pointer.y - mousePointTo.y * newScale,
+		};
+
+		stage.position(newPos);
+		stage.batchDraw();
+	}
+
+	private onStageMouseDown(e: Konva.KonvaEventObject<MouseEvent>) {
+		// Start panning on middle mouse button or right mouse button
+		if (e.evt.button === 1 || e.evt.button === 2) {
+			this.isPanning = true;
+			this.panStartX = this.stage.x();
+			this.panStartY = this.stage.y();
+
+			const pointer = this.stage.getPointerPosition();
+			if (pointer) {
+				this.panStartX = pointer.x - this.panStartX;
+				this.panStartY = pointer.y - this.panStartY;
+			}
+		}
+	}
+
+	private onStageMouseMove() {
+		if (!this.isPanning) return;
+
+		const pointer = this.stage.getPointerPosition();
+		if (!pointer) return;
+
+		const newX = pointer.x - this.panStartX;
+		const newY = pointer.y - this.panStartY;
+
+		this.stage.position({ x: newX, y: newY });
+		this.stage.batchDraw();
+	}
+
+	private onStageMouseUp() {
+		this.isPanning = false;
+	}
+
 	private applyWireAppearance(wire: KonvaWire) {
 		if (wire.line) {
-			wire.line.stroke(wire.stroke || '#00ff00');
-			wire.line.strokeWidth(wire.strokeWidth || 6);
+			if (Array.isArray(wire.line)) {
+				// Duo-color wire: update the main line (second element)
+				const mainLine = wire.line[1];
+				mainLine.stroke(wire.stroke || '#00ff00');
+				mainLine.strokeWidth(wire.strokeWidth || 6);
+			}
+			else {
+				// Single-color wire: update single line
+				(wire.line as Konva.Line).stroke(wire.stroke || '#00ff00');
+				(wire.line as Konva.Line).strokeWidth(wire.strokeWidth || 6);
+			}
 			this.wireLayer.batchDraw();
 		}
 	}
@@ -209,8 +296,15 @@ export class CanvasComponent implements AfterViewInit {
 			this.showWireAnchors(overlay.data as KonvaWire);
 			const wire = overlay.data as KonvaWire;
 			if (wire.line) {
-				wire.line.stroke('#ffff00');
-				wire.line.strokeWidth(8);
+				if (Array.isArray(wire.line)) {
+					// Duo-color wire: highlight the main line (second element)
+					wire.line[1].stroke('#ffff00');
+					wire.line[1].strokeWidth(8);
+				} else {
+					// Single-color wire
+					(wire.line as Konva.Line).stroke('#ffff00');
+					(wire.line as Konva.Line).strokeWidth(8);
+				}
 				this.wireLayer.batchDraw();
 			}
 		}
@@ -222,8 +316,17 @@ export class CanvasComponent implements AfterViewInit {
 		}
 		for (const wire of this.wires.displayWires as KonvaWire[]) {
 			if (wire.line) {
-				wire.line.stroke(wire.stroke || '#00ff00');
-				wire.line.strokeWidth(wire.strokeWidth || 6);
+				if (Array.isArray(wire.line)) {
+					// Duo-color wire: update the main line (second element)
+					const mainLine = wire.line[1];
+					mainLine.stroke(wire.stroke || '#00ff00');
+					mainLine.strokeWidth(wire.strokeWidth || 6);
+				}
+				else {
+					// Single-color wire: update single line
+					(wire.line as Konva.Line).stroke(wire.stroke || '#00ff00');
+					(wire.line as Konva.Line).strokeWidth(wire.strokeWidth || 6);
+				}
 			}
 		}
 		this.wireLayer.batchDraw();
@@ -357,6 +460,13 @@ export class CanvasComponent implements AfterViewInit {
 			const hasDescription = c.description && c.description.trim().length > 0;
 			if (hasDescription) {
 				const descRowY = headerHeight + c.pins.length * ROW_HEIGHT;
+				// Calculate description height based on text wrapping
+				const descWidth = width - PADDING * 2;
+				const avgCharWidth = 7; // Approximate character width
+				const charsPerLine = Math.floor(descWidth / avgCharWidth);
+				const lines = Math.max(1, Math.ceil(c.description!.length / charsPerLine));
+				const descHeight = lines * ROW_HEIGHT;
+
 				group.add(
 					new Konva.Line({
 						points: [0, descRowY, width, descRowY],
@@ -367,12 +477,15 @@ export class CanvasComponent implements AfterViewInit {
 				);
 				group.add(
 					new Konva.Text({
-						text: c.description,
+						text: c.description!,
 						fill: '#aaa',
 						fontSize: FONT_SIZE - 2,
 						x: PADDING,
-						y: descRowY + (ROW_HEIGHT - FONT_SIZE) / 2,
-						width: width - PADDING * 2,
+						y: descRowY + PADDING / 2,
+						width: descWidth,
+						height: descHeight,
+						wrap: 'word',
+						verticalAlign: 'top',
 						listening: false
 					})
 				);
@@ -497,10 +610,20 @@ export class CanvasComponent implements AfterViewInit {
 			return;
 		}
 
-		finished.line.on('click', (e) => {
-			e.cancelBubble = true;
-			this.selection.select({ type: 'wire', data: finished });
-		});
+		// Attach click handler to the appropriate line(s)
+		if (Array.isArray(finished.line)) {
+			// Duo-color wire: attach to main line (second element)
+			finished.line[1].on('click', (e) => {
+				e.cancelBubble = true;
+				this.selection.select({ type: 'wire', data: finished });
+			});
+		} else if (finished.line) {
+			// Single-color wire
+			(finished.line as Konva.Line).on('click', (e) => {
+				e.cancelBubble = true;
+				this.selection.select({ type: 'wire', data: finished });
+			});
+		}
 
 		this.layer.find('Circle').forEach((circle) => {
 			(circle as Konva.Circle).fill('orange');
@@ -538,9 +661,17 @@ export class CanvasComponent implements AfterViewInit {
 			return;
 		}
 
-		const snap = this.connectors.findSnapPointNear(pos.x, pos.y, 40, wire.from);
-		const endX = snap ? snap.x : pos.x;
-		const endY = snap ? snap.y : pos.y;
+		// Account for stage scale and position
+		const scale = this.stage.scaleX();
+		const stageX = this.stage.x();
+		const stageY = this.stage.y();
+
+		const transformedX = (pos.x - stageX) / scale;
+		const transformedY = (pos.y - stageY) / scale;
+
+		const snap = this.connectors.findSnapPointNear(transformedX, transformedY, 40, wire.from);
+		const endX = snap ? snap.x : transformedX;
+		const endY = snap ? snap.y : transformedY;
 
 		this.wires.updateActiveWireEnd(wire, endX, endY);
 
@@ -551,39 +682,94 @@ export class CanvasComponent implements AfterViewInit {
 				pinId: snap.pinId,
 				side: snap.side
 			};
-		} else {
+		}
+		else {
 			wire.to = undefined;
 		}
 
-		wire.line.points(this.wires.getBezierPoints(wire));
+		const newPoints = this.wires.getBezierPoints(wire);
+		if (Array.isArray(wire.line)) {
+			wire.line.forEach(line => line.points(newPoints));
+		} else if (wire.line) {
+			(wire.line as Konva.Line).points(newPoints);
+		}
 		this.wireLayer.batchDraw();
 	}
 
 	renderWires() {
 		for (const wire of this.wires.displayWires as KonvaWire[]) {
-			const line = new Konva.Line({
-				points: this.wires.getBezierPoints(wire),
-				stroke: wire.stroke,
+			const points = this.wires.getBezierPoints(wire);
+
+			// Determine colors
+			let primaryColor = wire.stroke;
+			let secondaryColor = wire.outlineColor;
+
+			// If colorCode is set and colors aren't manually overridden, derive from colorCode
+			if (wire.colorCode && !primaryColor && !secondaryColor) {
+				const colors = parseColorCode(wire.colorCode);
+				if (colors) {
+					const [primaryCode, secondaryCode] = colors;
+					primaryColor = getHexColor(primaryCode);
+					secondaryColor = getHexColor(secondaryCode);
+				}
+			} else if (wire.colorCode && primaryColor && !secondaryColor) {
+				// Primary color is set manually, derive secondary from colorCode
+				const colors = parseColorCode(wire.colorCode);
+				if (colors) {
+					const [, secondaryCode] = colors;
+					secondaryColor = getHexColor(secondaryCode);
+				}
+			}
+
+			// Default to green if not set
+			primaryColor = primaryColor || '#00ff00';
+			secondaryColor = secondaryColor || primaryColor;
+
+			// Outline layer (2x the thickness so it's very visible)
+			const outline = new Konva.Line({
+				points,
+				stroke: secondaryColor,
+				strokeWidth: wire.strokeWidth * 2,
+				lineCap: 'round',
+				lineJoin: 'round',
+				hitStrokeWidth: 0,
+				listening: false
+			});
+
+			// Main line (primary color)
+			const mainLine = new Konva.Line({
+				points,
+				stroke: primaryColor,
 				strokeWidth: wire.strokeWidth,
 				lineCap: 'round',
 				lineJoin: 'round',
 				hitStrokeWidth: 20
 			});
 
-			wire.line = line;
-			line.on('click', (e) => {
+			// Store both lines for updating later
+			wire.line = [outline, mainLine];
+			mainLine.on('click', (e) => {
 				e.cancelBubble = true;
 				this.selection.select({ type: 'wire', data: wire });
 			});
 
-			this.wireLayer.add(line);
+			this.wireLayer.add(outline);
+			this.wireLayer.add(mainLine);
 		}
 	}
 
 	private redrawAllWireCurves() {
 		for (const wire of this.wires.displayWires as KonvaWire[]) {
 			if (wire.line) {
-				wire.line.points(this.wires.getBezierPoints(wire));
+				const newPoints = this.wires.getBezierPoints(wire);
+				if (Array.isArray(wire.line)) {
+					// Duo-color wire: update all lines
+					wire.line.forEach(line => line.points(newPoints));
+				}
+				else {
+					// Single-color wire: update single line
+					(wire.line as Konva.Line).points(newPoints);
+				}
 			}
 		}
 	}
@@ -709,7 +895,8 @@ export class CanvasComponent implements AfterViewInit {
 						pinId: snap.pinId,
 						side: snap.side
 					};
-				} else {
+				}
+				else {
 					wire.startX = anchor.x();
 					wire.startY = anchor.y();
 					// Clear the connection when not snapped
@@ -736,7 +923,8 @@ export class CanvasComponent implements AfterViewInit {
 						pinId: snap.pinId,
 						side: snap.side
 					};
-				} else {
+				}
+				else {
 					wire.endX = anchor.x();
 					wire.endY = anchor.y();
 					// Clear the connection when not snapped
@@ -770,7 +958,16 @@ export class CanvasComponent implements AfterViewInit {
 				]);
 			}
 
-			wire.line.points(this.wires.getBezierPoints(wire));
+			// Update all lines (handles both single-color and duo-color wires)
+			const newPoints = this.wires.getBezierPoints(wire);
+			if (Array.isArray(wire.line)) {
+				// Duo-color wire: update all lines
+				wire.line.forEach(line => line.points(newPoints));
+			}
+			else {
+				// Single-color wire: update single line
+				(wire.line as Konva.Line).points(newPoints);
+			}
 			this.wireLayer.batchDraw();
 			this.anchorLayer.batchDraw();
 		});

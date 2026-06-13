@@ -19,6 +19,21 @@ export function getHeaderHeight(): number {
 	return CONNECTOR_LAYOUT.ROW_HEIGHT + CONNECTOR_LAYOUT.PADDING;
 }
 
+export function calculateDescriptionHeight(description: string, width: number): number {
+	if (!description || description.trim().length === 0) {
+		return 0;
+	}
+
+	// Estimate line count based on text width and average character width
+	const availableWidth = width - CONNECTOR_LAYOUT.PADDING * 2;
+	const avgCharWidth = 7; // Approximate character width at FONT_SIZE 10
+	const charsPerLine = Math.floor(availableWidth / avgCharWidth);
+	const lines = Math.ceil(description.length / charsPerLine);
+
+	// Return height needed (minimum 1 line, each line is ROW_HEIGHT)
+	return Math.max(lines * CONNECTOR_LAYOUT.ROW_HEIGHT, CONNECTOR_LAYOUT.ROW_HEIGHT);
+}
+
 export function getConnectorWidth(connector: Connector): number {
 	return connector.width ?? DEFAULT_CONNECTOR_WIDTH;
 }
@@ -26,10 +41,11 @@ export function getConnectorWidth(connector: Connector): number {
 export function getConnectorHeight(connector: Connector): number {
 	const headerHeight = getHeaderHeight();
 	const rowsHeight = connector.pins.length * CONNECTOR_LAYOUT.ROW_HEIGHT;
+	const width = getConnectorWidth(connector);
 	const hasDescription =
 		connector.description && connector.description.trim().length > 0;
-	const descriptionRowHeight = hasDescription ? CONNECTOR_LAYOUT.ROW_HEIGHT : 0;
-	return headerHeight + rowsHeight + descriptionRowHeight + CONNECTOR_LAYOUT.PADDING;
+	const descriptionHeight = hasDescription ? calculateDescriptionHeight(connector.description || '', width) : 0;
+	return headerHeight + rowsHeight + descriptionHeight + CONNECTOR_LAYOUT.PADDING;
 }
 
 export function getPinRowY(pinIndex: number): number {

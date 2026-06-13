@@ -13,6 +13,9 @@ export interface WireDisplay {
 	controlEndY: number;
 	stroke: string;
 	strokeWidth: number;
+	colorCode?: string; // e.g., "BN", "BNWH", "GN"
+	thickness?: string; // e.g., "AWG 22", "0.5mm"
+	outlineColor?: string; // secondary/outline color (e.g., for duo-color wires)
 	attachment?: {
 		// optional metadata for snapped wire ends
 		target: WireEnd;

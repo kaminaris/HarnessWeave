@@ -15,10 +15,40 @@ export class HarnessStateService {
 	) {}
 
 	exportState(): HarnessProjectState {
+		// Filter out Konva objects (line, anchors) from wires before serializing
+		const cleanWires = this.wires.displayWires.map(wire => ({
+			from: wire.from,
+			to: wire.to,
+			startX: wire.startX,
+			startY: wire.startY,
+			endX: wire.endX,
+			endY: wire.endY,
+			controlStartX: wire.controlStartX,
+			controlStartY: wire.controlStartY,
+			controlEndX: wire.controlEndX,
+			controlEndY: wire.controlEndY,
+			stroke: wire.stroke,
+			strokeWidth: wire.strokeWidth,
+			colorCode: wire.colorCode,
+			thickness: wire.thickness,
+			outlineColor: wire.outlineColor
+		}));
+
+		// Filter out Konva group objects from connectors before serializing
+		const cleanConnectors = this.connectors.connectors.map(connector => ({
+			id: connector.id,
+			type: connector.type,
+			name: connector.name,
+			description: connector.description,
+			x: connector.x,
+			y: connector.y,
+			pins: connector.pins
+		}));
+
 		return {
 			version: 1,
-			connectors: structuredClone(this.connectors.connectors),
-			wires: structuredClone(this.wires.displayWires)
+			connectors: cleanConnectors,
+			wires: cleanWires
 		};
 	}
 
