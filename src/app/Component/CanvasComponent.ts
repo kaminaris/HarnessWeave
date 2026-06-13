@@ -87,12 +87,56 @@ export class CanvasComponent implements AfterViewInit {
 		this.syncOverlay(this.selection.overlay());
 
 		window.addEventListener('resize', () => this.onWindowResize());
+		window.addEventListener('keydown', (e) => this.onKeyDown(e));
 
 		this.stage.on('click', (e) => {
 			if (e.target === this.stage) {
 				this.selection.deselect();
 			}
 		});
+	}
+
+	private onKeyDown(event: KeyboardEvent) {
+		if (event.key === 'Delete') {
+			const selected = this.selection.getSelected();
+			if (!selected) {
+				return;
+			}
+
+			if (selected.type === 'connector') {
+				if (!confirm(`Delete connector "${selected.data.name}"? All connected wires will also be deleted.`)) {
+					return;
+				}
+
+				// Delete all wires connected to this connector
+				this.wires.displayWires = this.wires.displayWires.filter(
+					(wire: WireDisplay) =>
+						(!wire.from || wire.from.connectorId !== selected.data.id) &&
+						(!wire.to || wire.to.connectorId !== selected.data.id)
+				);
+
+				// Delete the connector
+				const index = this.connectors.connectors.findIndex((c: Connector) => c.id === selected.data.id);
+				if (index !== -1) {
+					this.connectors.connectors.splice(index, 1);
+				}
+
+				this.selection.deselect();
+				this.render();
+			} else if (selected.type === 'wire') {
+				if (!confirm('Delete this wire?')) {
+					return;
+				}
+
+				const index = this.wires.displayWires.findIndex((w: WireDisplay) => w === selected.data);
+				if (index !== -1) {
+					this.wires.displayWires.splice(index, 1);
+				}
+
+				this.selection.deselect();
+				this.render();
+			}
+		}
 	}
 
 	private applyWireAppearance(wire: KonvaWire) {
@@ -668,6 +712,8 @@ export class CanvasComponent implements AfterViewInit {
 				} else {
 					wire.startX = anchor.x();
 					wire.startY = anchor.y();
+					// Clear the connection when not snapped
+					wire.from = undefined;
 				}
 				startControlLine.points([
 					wire.startX,
@@ -693,6 +739,8 @@ export class CanvasComponent implements AfterViewInit {
 				} else {
 					wire.endX = anchor.x();
 					wire.endY = anchor.y();
+					// Clear the connection when not snapped
+					wire.to = undefined;
 				}
 				endControlLine.points([
 					wire.endX,

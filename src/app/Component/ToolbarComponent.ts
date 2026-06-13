@@ -42,7 +42,10 @@ interface WireColor {
 					@switch (selection.type) {
 						@case ('connector') {
 							<div class="property-section">
-								<h6 class="mb-2">Connector</h6>
+								<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+									<h6 class="mb-0">Connector</h6>
+									<button class="btn-delete" (click)="deleteConnector(selection.data)" title="Delete connector">×</button>
+								</div>
 								<div class="property">
 									<label>Type:</label>
 									<input type="text" class="form-control form-control-sm" [(ngModel)]="selection.data.type" (ngModelChange)="onConnectorPropertyChange(selection.data)" placeholder="e.g., JWPF-3" />
@@ -102,7 +105,10 @@ interface WireColor {
 						}
 						@case ('wire') {
 							<div class="property-section">
-								<h6 class="mb-2">Wire</h6>
+								<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+									<h6 class="mb-0">Wire</h6>
+									<button class="btn-delete" (click)="deleteWire(selection.data)" title="Delete wire">×</button>
+								</div>
 								<div class="property">
 									<label>Thickness:</label>
 									<input type="number" class="form-control form-control-sm" [(ngModel)]="selection.data.strokeWidth" (change)="onThicknessChange(selection.data)" min="1" max="20" />
@@ -614,6 +620,38 @@ export class ToolbarComponent implements OnInit {
 		this.canvasRender.requestRender();
 		this.selection.select({ type: 'wire', data: wire });
 	}
+
+	deleteConnector(connector: any) {
+		if (!confirm(`Delete connector "${connector.name}"? All connected wires will also be deleted.`)) {
+			return;
+		}
+
+		// Delete all wires connected to this connector
+		this.wires.displayWires = this.wires.displayWires.filter(
+			wire => (!wire.from || wire.from.connectorId !== connector.id) && (!wire.to || wire.to.connectorId !== connector.id)
+		);
+
+		// Delete the connector
+		const index = this.connectors.connectors.findIndex((c: any) => c.id === connector.id);
+		if (index !== -1) {
+			this.connectors.connectors.splice(index, 1);
+		}
+
+		this.selection.deselect();
+		this.canvasRender.requestRender();
+	}
+
+	deleteWire(wire: any) {
+		if (!confirm('Delete this wire?')) {
+			return;
+		}
+
+		const index = this.wires.displayWires.findIndex((w: any) => w === wire);
+		if (index !== -1) {
+			this.wires.displayWires.splice(index, 1);
+		}
+
+		this.selection.deselect();
+		this.canvasRender.requestRender();
+	}
 }
-
-

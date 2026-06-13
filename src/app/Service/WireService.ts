@@ -48,7 +48,10 @@ export class WireService {
 		const dx = wire.endX - wire.startX;
 		const offset = Math.max(Math.abs(dx) * 0.3, CONNECTOR_LAYOUT.CONTROL_OFFSET);
 
-		if (wire.from.side === 'left') {
+		// Default to right side if wire.from is not defined
+		const fromSide = wire.from?.side || 'right';
+
+		if (fromSide === 'left') {
 			wire.controlStartX = wire.startX - offset;
 		} else {
 			wire.controlStartX = wire.startX + offset;
@@ -77,7 +80,7 @@ export class WireService {
 			}
 
 			// Update start position if wire originates from this connector
-			if (wire.from.connectorId === connectorId) {
+			if (wire.from && wire.from.connectorId === connectorId) {
 				const pos = this.connectors.getSnapPointStagePosition(
 					connector,
 					wire.from.pinId,

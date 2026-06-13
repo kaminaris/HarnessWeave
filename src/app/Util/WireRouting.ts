@@ -59,6 +59,11 @@ export function findWireBundle(
 		side: 'left' | 'right'
 	) => { x: number; y: number } | null
 ): WireDisplay[] {
+	// If wire doesn't have a source connection, return just this wire
+	if (!wire.from) {
+		return [wire];
+	}
+
 	const endSnap = findSnapPointNear(
 		connectors,
 		wire.endX,
@@ -68,7 +73,7 @@ export function findWireBundle(
 	);
 
 	const sameSource = allWires.filter(
-		(w) => w.from.connectorId === wire.from.connectorId
+		(w) => w.from && wire.from && w.from.connectorId === wire.from.connectorId
 	);
 
 	if (!endSnap) {
@@ -101,7 +106,7 @@ export function computeAutoPath(
 		CONNECTOR_LAYOUT.CONTROL_OFFSET
 	);
 
-	const startSign = wire.from.side === 'left' ? -1 : 1;
+	const startSign = wire.from && wire.from.side === 'left' ? -1 : 1;
 
 	if (endSnap) {
 		wire.endX = endSnap.x;

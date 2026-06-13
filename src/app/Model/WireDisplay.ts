@@ -1,7 +1,7 @@
 import { WireEnd } from './Wire';
 
 export interface WireDisplay {
-	from: WireEnd;
+	from?: WireEnd;
 	to?: WireEnd;
 	startX: number;
 	startY: number;
